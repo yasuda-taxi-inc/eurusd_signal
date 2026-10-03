@@ -1,0 +1,57 @@
+name: eurusd-signal-scan
+
+on:
+  schedule:
+    # UTC・日〜金。FXは日曜22:00UTC開場〜金曜22:00UTC閉場（休場中は最新足が古いのでスクリプトが何もせず終了）。
+    # Twelve Data無料枠は800回/日。EUR/USD単体=288回/日。別リポジトリのUSD/JPYと同じAPIキーを使う場合は
+    # 合算（288+288=576回/日）で消費されます。時間帯を絞るなら例: "*/5 6-17 * * 1-5"（日本時間15:00〜翌2:55）
+    - cron: "*/5 * * * 0-5"
+  workflow_dispatch:
+    inputs:
+      test_notify:
+        description: "テスト通知を1通送る（判定は行わない）"
+        type: boolean
+        default: false
+
+concurrency:
+  group: eurusd-signal-scan
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # CSVの最終コミット時刻(=シナリオ有効開始時刻)を git log で取得するため
+
+      - name: Scan
+        env:
+          TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_SERVER: ${{ vars.NTFY_SERVER }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          PAIR: EURUSD
+          SIGNAL_SINCE: ${{ vars.SIGNAL_SINCE }}   # 任意。シナリオの有効開始時刻を手動で上書き
+        run: |
+          if [ "${{ inputs.test_notify }}" = "true" ]; then
+            python3 -m scanner.main --test-notify
+          else
+            python3 -m scanner.main
+          fi
+
+      - name: Commit state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          [ -f state/notified.json ] && git add state/notified.json
+          git diff --cached --quiet || (git commit -m "update notified state" && git pull --rebase && git push)
